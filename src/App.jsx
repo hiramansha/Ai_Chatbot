@@ -37,27 +37,45 @@ export default function App() {
   const [chatError, setChatError] = useState('');
   const bottomRef = useRef(null);
 
+  // Restore the Supabase session after returning from Google OAuth.
   useEffect(() => {
-    let alive = true;
+    let mounted = true;
 
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!alive) return;
-      if (error) setAuthError(error.message);
-      setUser(data?.session?.user ?? null);
-      setAuthLoading(false);
-    });
+    async function restoreSession() {
+      try {
+        const { data, error } = await supabase.auth.getSession();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
+        if (!mounted) return;
+
+        if (error) {
+          setAuthError(error.message);
+        }
+
+        setUser(data?.session?.user ?? null);
+      } catch (error) {
+        if (mounted) {
+          setAuthError(error.message || 'Could not restore your login.');
+        }
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        if (!alive) return;
+        if (!mounted) return;
+
         setUser(session?.user ?? null);
         setAuthLoading(false);
+        setAuthError('');
       }
     );
 
+    restoreSession();
+
     return () => {
-      alive = false;
-      listener.subscription.unsubscribe();
+      mounted = false;
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
@@ -80,7 +98,12 @@ export default function App() {
 
     if (activeChatId) {
       const current = rows.find((chat) => chat.id === activeChatId);
-      if (current) setMessages(Array.isArray(current.messages) ? current.messages : []);
+
+      if (current) {
+        setMessages(
+          Array.isArray(current.messages) ? current.messages : []
+        );
+      }
     }
   }, [user, activeChatId]);
 
@@ -105,12 +128,14 @@ export default function App() {
     setNotice('');
 
     const cleanEmail = email.trim().toLowerCase();
+
     if (!cleanEmail || !password) {
       setAuthError('Please enter your email and password.');
       return;
     }
 
     setAuthBusy(true);
+
     try {
       if (authMode === 'signup') {
         const { data, error } = await supabase.auth.signUp({
@@ -124,17 +149,23 @@ export default function App() {
         if (error) throw error;
 
         if (data.session) {
+          setUser(data.session.user);
           setNotice('Account created successfully!');
         } else {
-          setNotice('Account created. Check your email to confirm your account, then sign in.');
+          setNotice(
+            'Account created. Check your email to confirm your account, then sign in.'
+          );
           setAuthMode('login');
         }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password,
         });
+
         if (error) throw error;
+
+        setUser(data.user);
       }
     } catch (error) {
       setAuthError(error.message || 'Authentication failed. Please try again.');
@@ -146,18 +177,40 @@ export default function App() {
   async function signInWithProvider(provider) {
     setAuthError('');
     setNotice('');
+    setAuthBusy(true);
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: window.location.origin },
-    });
+    try {
+      const redirectTo = `${window.location.origin}/`;
 
-    if (error) setAuthError(error.message);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+        },
+      });
+
+      if (error) throw error;
+      // Supabase redirects the browser to the provider automatically.
+    } catch (error) {
+      setAuthError(error.message || 'Could not start Google sign-in.');
+      setAuthBusy(false);
+    }
   }
 
   async function signOut() {
+    setAuthError('');
+
     const { error } = await supabase.auth.signOut();
-    if (error) setAuthError(error.message);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setUser(null);
+    setChats([]);
+    setActiveChatId(null);
+    setMessages([]);
   }
 
   function startNewChat() {
@@ -174,7 +227,11 @@ export default function App() {
   }
 
   async function persistChat(nextMessages, chatId) {
-    const firstUserMessage = nextMessages.find((message) => message.role === 'user');
+    if (!user) throw new Error('Please sign in again.');
+
+    const firstUserMessage = nextMessages.find(
+      (message) => message.role === 'user'
+    );
     const title = (firstUserMessage?.content || 'New Chat').slice(0, 60);
 
     if (chatId) {
@@ -191,11 +248,13 @@ export default function App() {
         .single();
 
       if (error) throw error;
+
       setActiveChatId(data.id);
       setChats((previous) => [
         data,
         ...previous.filter((chat) => chat.id !== data.id),
       ]);
+
       return data.id;
     }
 
@@ -210,16 +269,19 @@ export default function App() {
       .single();
 
     if (error) throw error;
+
     setActiveChatId(data.id);
     setChats((previous) => [
       data,
       ...previous.filter((chat) => chat.id !== data.id),
     ]);
+
     return data.id;
   }
 
   async function sendMessage(text = input) {
     const cleanText = text.trim();
+
     if (!cleanText || sending || !user) return;
 
     setInput('');
@@ -228,6 +290,7 @@ export default function App() {
 
     const userMessage = { role: 'user', content: cleanText };
     const nextMessages = [...messages, userMessage];
+
     setMessages(nextMessages);
 
     let chatId = activeChatId;
@@ -239,6 +302,7 @@ export default function App() {
       const timeoutId = setTimeout(() => controller.abort(), 60000);
 
       let response;
+
       try {
         response = await fetch('/api/chat', {
           method: 'POST',
@@ -251,21 +315,30 @@ export default function App() {
       }
 
       const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        throw new Error(data.error || data.reply || `Request failed (${response.status})`);
+        throw new Error(
+          data.error || data.reply || `Request failed (${response.status})`
+        );
       }
 
       const reply = data.reply || data.text || data.message;
-      if (!reply) throw new Error('The AI returned an empty response.');
+
+      if (!reply) {
+        throw new Error('The AI returned an empty response.');
+      }
 
       const assistantMessage = { role: 'assistant', content: reply };
       const finalMessages = [...nextMessages, assistantMessage];
+
       setMessages(finalMessages);
       await persistChat(finalMessages, chatId);
     } catch (error) {
-      const message = error.name === 'AbortError'
-        ? 'The request took too long. Please try again.'
-        : error.message || 'Something went wrong. Please try again.';
+      const message =
+        error.name === 'AbortError'
+          ? 'The request took too long. Please try again.'
+          : error.message || 'Something went wrong. Please try again.';
+
       setChatError(message);
     } finally {
       setSending(false);
@@ -287,11 +360,15 @@ export default function App() {
         <section className="auth-card">
           <div className="brand-lockup">
             <div className="nova-mark">✦</div>
-            <span>nova<span className="brand-light">.ai</span></span>
+            <span>
+              nova<span className="brand-light">.ai</span>
+            </span>
           </div>
 
           <p className="eyebrow">YOUR PERSONAL AI ASSISTANT</p>
-          <h1>{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          <h1>
+            {authMode === 'login' ? 'Welcome back' : 'Create your account'}
+          </h1>
           <p className="auth-subtitle">
             {authMode === 'login'
               ? 'Sign in to continue your conversations.'
@@ -299,16 +376,34 @@ export default function App() {
           </p>
 
           <div className="social-buttons">
-            <button type="button" className="social-button" onClick={() => signInWithProvider('google')}>
+            <button
+              type="button"
+              className="social-button"
+              disabled={authBusy}
+              onClick={() => signInWithProvider('google')}
+            >
               <span className="google-symbol">G</span> Continue with Google
             </button>
-            <button type="button" className="social-button" onClick={() => signInWithProvider('github')}>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.55.1.76-.24.76-.53v-2.08c-3.1.67-3.76-1.32-3.76-1.32-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.71 1.15 1.71 1.15.99 1.7 2.59 1.21 3.22.92.1-.72.39-1.21.7-1.49-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.05 1.15a10.6 10.6 0 0 1 5.55 0c2.11-1.45 3.05-1.15 3.05-1.15.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3 0 4.29-2.62 5.24-5.11 5.51.4.35.75 1.03.75 2.08V22c0 .29.2.63.76.52A11.1 11.1 0 0 0 12 .9Z"/></svg>
+
+            <button
+              type="button"
+              className="social-button"
+              disabled={authBusy}
+              onClick={() => signInWithProvider('github')}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.55.1.76-.24.76-.53v-2.08c-3.1.67-3.76-1.32-3.76-1.32-.5-1.28-1.23-1.62-1.23-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.71 1.15 1.71 1.15.99 1.7 2.59 1.21 3.22.92.1-.72.39-1.21.7-1.49-2.48-.28-5.09-1.24-5.09-5.52 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .94-.3 3.05 1.15a10.6 10.6 0 0 1 5.55 0c2.11-1.45 3.05-1.15 3.05-1.15.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3 0 4.29-2.62 5.24-5.11 5.51.4.35.75 1.03.75 2.08V22c0 .29.2.63.76.52A11.1 11.1 0 0 0 12 .9Z"
+                />
+              </svg>
               Continue with GitHub
             </button>
           </div>
 
-          <div className="auth-divider"><span>or continue with email</span></div>
+          <div className="auth-divider">
+            <span>or continue with email</span>
+          </div>
 
           <form className="auth-form" onSubmit={handleAuth}>
             <label htmlFor="email">Email address</label>
@@ -326,7 +421,9 @@ export default function App() {
             <input
               id="password"
               type="password"
-              autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+              autoComplete={
+                authMode === 'login' ? 'current-password' : 'new-password'
+              }
               placeholder="At least 6 characters"
               minLength={6}
               value={password}
@@ -334,17 +431,31 @@ export default function App() {
               required
             />
 
-            {authError && <p className="form-message error-message">{authError}</p>}
-            {notice && <p className="form-message success-message">{notice}</p>}
+            {authError && (
+              <p className="form-message error-message">{authError}</p>
+            )}
+            {notice && (
+              <p className="form-message success-message">{notice}</p>
+            )}
 
-            <button className="primary-button" type="submit" disabled={authBusy}>
-              {authBusy ? 'Please wait...' : authMode === 'login' ? 'Sign in' : 'Create account'}
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={authBusy}
+            >
+              {authBusy
+                ? 'Please wait...'
+                : authMode === 'login'
+                  ? 'Sign in'
+                  : 'Create account'}
               {!authBusy && <span>→</span>}
             </button>
           </form>
 
           <p className="auth-switch">
-            {authMode === 'login' ? "Don't have an account?" : 'Already have an account?'}{' '}
+            {authMode === 'login'
+              ? "Don't have an account?"
+              : 'Already have an account?'}{' '}
             <button
               type="button"
               onClick={() => {
@@ -357,7 +468,9 @@ export default function App() {
             </button>
           </p>
 
-          <p className="auth-footnote">Your conversations are private to your account.</p>
+          <p className="auth-footnote">
+            Your conversations are private to your account.
+          </p>
         </section>
       </main>
     );
@@ -368,7 +481,9 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="nova-mark">✦</div>
-          <span>nova<span className="brand-light">.ai</span></span>
+          <span>
+            nova<span className="brand-light">.ai</span>
+          </span>
         </div>
 
         <button className="new-chat-button" onClick={startNewChat}>
@@ -377,37 +492,56 @@ export default function App() {
 
         <div className="history-heading">YOUR HISTORY</div>
         <div className="history-list">
-          {chats.length === 0 && <p className="history-empty">Your saved chats will appear here.</p>}
+          {chats.length === 0 && (
+            <p className="history-empty">
+              Your saved chats will appear here.
+            </p>
+          )}
+
           {chats.map((chat) => (
             <button
               key={chat.id}
-              className={`history-item ${activeChatId === chat.id ? 'selected' : ''}`}
+              className={`history-item ${
+                activeChatId === chat.id ? 'selected' : ''
+              }`}
               onClick={() => openChat(chat)}
               title={chat.title}
             >
               <span>◷</span>
-              <span className="history-title">{chat.title || 'New Chat'}</span>
+              <span className="history-title">
+                {chat.title || 'New Chat'}
+              </span>
             </button>
           ))}
         </div>
 
         <div className="sidebar-bottom">
           <div className="user-profile">
-            <div className="avatar">{getDisplayName(user).slice(0, 1).toUpperCase()}</div>
+            <div className="avatar">
+              {getDisplayName(user).slice(0, 1).toUpperCase()}
+            </div>
             <div className="user-info">
               <strong>{getDisplayName(user)}</strong>
               <span>{user.email}</span>
             </div>
           </div>
-          <button className="signout-button" onClick={signOut}>Sign out ↗</button>
+          <button className="signout-button" onClick={signOut}>
+            Sign out ↗
+          </button>
         </div>
       </aside>
 
       <section className="chat-area">
         <header className="chat-header">
-          <div className="mobile-brand"><div className="nova-mark">✦</div> nova.ai</div>
-          <span className="status-indicator"><i /> AI assistant</span>
-          <button className="mobile-new-chat" onClick={startNewChat}>＋ New chat</button>
+          <div className="mobile-brand">
+            <div className="nova-mark">✦</div> nova.ai
+          </div>
+          <span className="status-indicator">
+            <i /> AI assistant
+          </span>
+          <button className="mobile-new-chat" onClick={startNewChat}>
+            ＋ New chat
+          </button>
         </header>
 
         <div className="conversation">
@@ -416,11 +550,17 @@ export default function App() {
               <div className="welcome-icon">✦</div>
               <p className="eyebrow">YOUR SPACE TO THINK BIGGER</p>
               <h1>Welcome, {getDisplayName(user)}.</h1>
-              <p className="welcome-subtitle">What would you like to work on today?</p>
+              <p className="welcome-subtitle">
+                What would you like to work on today?
+              </p>
 
               <div className="suggestion-grid">
                 {suggestions.map((suggestion, index) => (
-                  <button key={suggestion} onClick={() => sendMessage(suggestion)} disabled={sending}>
+                  <button
+                    key={suggestion}
+                    onClick={() => sendMessage(suggestion)}
+                    disabled={sending}
+                  >
                     <span>{['✧', '✎', '⌘', '✳'][index]}</span>
                     {suggestion}
                     <b>↗</b>
@@ -431,30 +571,42 @@ export default function App() {
           ) : (
             <div className="message-list">
               {messages.map((message, index) => (
-                <article className={`message-row ${message.role}`} key={`${index}-${message.role}`}>
+                <article
+                  className={`message-row ${message.role}`}
+                  key={`${index}-${message.role}`}
+                >
                   <div className="message-avatar">
                     {message.role === 'user'
                       ? getDisplayName(user).slice(0, 1).toUpperCase()
                       : '✦'}
                   </div>
                   <div className="message-content">
-                    <div className="message-label">{message.role === 'user' ? 'You' : 'Nova AI'}</div>
+                    <div className="message-label">
+                      {message.role === 'user' ? 'You' : 'Nova AI'}
+                    </div>
                     <div className="message-text">{message.content}</div>
                   </div>
                 </article>
               ))}
+
               {sending && (
                 <article className="message-row assistant">
                   <div className="message-avatar">✦</div>
                   <div className="message-content">
                     <div className="message-label">Nova AI</div>
-                    <div className="typing-indicator"><i /><i /><i /></div>
+                    <div className="typing-indicator">
+                      <i />
+                      <i />
+                      <i />
+                    </div>
                   </div>
                 </article>
               )}
+
               <div ref={bottomRef} />
             </div>
           )}
+
           {chatError && <p className="chat-error">{chatError}</p>}
         </div>
 
@@ -479,11 +631,17 @@ export default function App() {
               rows={1}
               aria-label="Message Nova AI"
             />
-            <button type="submit" disabled={!input.trim() || sending} aria-label="Send message">
+            <button
+              type="submit"
+              disabled={!input.trim() || sending}
+              aria-label="Send message"
+            >
               {sending ? '…' : '↑'}
             </button>
           </form>
-          <p className="composer-note">Nova AI can make mistakes. Check important information.</p>
+          <p className="composer-note">
+            Nova AI can make mistakes. Check important information.
+          </p>
         </div>
       </section>
     </main>
