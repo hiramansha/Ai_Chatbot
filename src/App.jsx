@@ -37,8 +37,8 @@ export default function App() {
 
   async function sendMessage(event) {
     event.preventDefault();
-    const text = message.trim();
 
+    const text = message.trim();
     if (!text || loading) return;
 
     setSentMessages((previous) => [
@@ -50,6 +50,9 @@ export default function App() {
     setLoading(true);
     setError("");
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -57,26 +60,37 @@ export default function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ message: text }),
+        signal: controller.signal,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.error || "AI se jawab nahi mila.");
+        throw new Error(
+          data.error || `Server error (HTTP ${response.status}).`
+        );
+      }
+
+      if (typeof data.reply !== "string" || !data.reply.trim()) {
+        throw new Error("AI ne khali response diya. Dobara try karein.");
       }
 
       setSentMessages((previous) => [
         ...previous,
-        {
-          role: "assistant",
-          text: data.reply || "AI se khali response mila.",
-        },
+        { role: "assistant", text: data.reply.trim() },
       ]);
     } catch (err) {
-      setError(
-        err.message || "Connection mein masla hai. Dobara try karo."
-      );
+      if (err.name === "AbortError") {
+        setError(
+          "Request 30 seconds mein complete nahi hui. Gemini API ya server ko check karein."
+        );
+      } else {
+        setError(
+          err.message || "Connection mein masla hai. Dobara try karein."
+        );
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -199,9 +213,7 @@ export default function App() {
             </span>
             <button
               className="upgrade-button"
-              onClick={() =>
-                alert("Upgrade options can be added here later.")
-              }
+              onClick={() => alert("Upgrade options can be added here later.")}
             >
               ✧ <span>Explore Pro</span>
             </button>
@@ -253,7 +265,7 @@ export default function App() {
               ))}
 
               {loading && (
-                <div className="demo-notice">
+                <div className="demo-notice" role="status" aria-live="polite">
                   <span>✧</span>
                   <div>
                     <strong>Nova AI</strong>
@@ -263,11 +275,23 @@ export default function App() {
               )}
 
               {error && (
-                <div className="demo-notice">
+                <div className="demo-notice" role="alert">
                   <span>!</span>
                   <div>
                     <strong>Connection error</strong>
                     <p>{error}</p>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => {
+                        setMessage(
+                          sentMessages.filter((item) => item.role === "user").at(-1)?.text || ""
+                        );
+                        setError("");
+                      }}
+                    >
+                      Try again
+                    </button>
                   </div>
                 </div>
               )}
