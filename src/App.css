@@ -1,0 +1,115 @@
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #101014;
+  color: #f5f5f5;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 250px;
+  padding: 24px;
+  background: #19191f;
+  border-right: 1px solid #303039;
+}
+
+.sidebar h2 {
+  font-size: 22px;
+}
+
+.sidebar button {
+  width: 100%;
+  padding: 12px;
+  margin: 20px 0;
+  border: 1px solid #454550;
+  border-radius: 10px;
+  background: transparent;
+  color: white;
+}
+
+.sidebar p {
+  color: #aaaab5;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+}
+
+.welcome {
+  width: 100%;
+  max-width: 700px;
+  text-align: center;
+}
+
+.welcome h1 {
+  font-size: clamp(28px, 5vw, 42px);
+}
+
+.welcome p {
+  color: #aaaab5;
+  margin-bottom: 32px;
+}
+
+.welcome form {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  background: #202027;
+  border: 1px solid #41414b;
+  border-radius: 16px;
+}
+
+.welcome input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px;
+  color: white;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.welcome form button {
+  padding: 12px 20px;
+  color: white;
+  background: #6555e8;
+  border: none;
+  border-radius: 10px;
+}
+
+@media (max-width: 600px) {
+  .sidebar {
+    width: 130px;
+    padding: 12px;
+  }
+
+  .sidebar h2 {
+    font-size: 16px;
+  }
+
+  .main {
+    padding: 14px;
+  }
+}
