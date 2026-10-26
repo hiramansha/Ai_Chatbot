@@ -24,22 +24,61 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [selectedChat, setSelectedChat] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   function startNewChat() {
     setMessage("");
     setSelectedChat("");
     setSentMessages([]);
+    setError("");
+    setLoading(false);
   }
 
-  function sendMessage(event) {
+  async function sendMessage(event) {
     event.preventDefault();
     const text = message.trim();
 
-    if (!text) return;
+    if (!text || loading) return;
 
-    setSentMessages((previous) => [...previous, text]);
+    setSentMessages((previous) => [
+      ...previous,
+      { role: "user", text },
+    ]);
     setSelectedChat(text);
     setMessage("");
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message: text }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI se jawab nahi mila.");
+      }
+
+      setSentMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          text: data.reply || "AI se khali response mila.",
+        },
+      ]);
+    } catch (err) {
+      setError(
+        err.message || "Connection mein masla hai. Dobara try karo."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   const filteredChats = starterChats.filter((chat) =>
@@ -191,31 +230,47 @@ export default function App() {
               <div className="conversation-heading">
                 <span className="eyebrow">YOUR CONVERSATION</span>
                 <h1>{selectedChat || "New conversation"}</h1>
-                <p>
-                  Your message has been added to this demo conversation.
-                  Connect an AI API to receive real responses.
-                </p>
+                <p>Chat with Nova AI and explore your ideas.</p>
               </div>
 
-              {sentMessages.map((text, index) => (
-                <div className="user-message" key={`${text}-${index}`}>
-                  <span className="message-avatar">Y</span>
+              {sentMessages.map((item, index) => (
+                <div
+                  className={
+                    item.role === "user" ? "user-message" : "demo-notice"
+                  }
+                  key={`${item.role}-${index}`}
+                >
+                  <span className="message-avatar">
+                    {item.role === "user" ? "Y" : "✧"}
+                  </span>
                   <div>
-                    <strong>You</strong>
-                    <p>{text}</p>
+                    <strong>
+                      {item.role === "user" ? "You" : "Nova AI"}
+                    </strong>
+                    <p>{item.text}</p>
                   </div>
                 </div>
               ))}
 
-              <div className="demo-notice">
-                <span>✧</span>
-                <p>
-                  <strong>Nova AI</strong>
-                  <br />
-                  The chat interface is ready. Real AI replies will work
-                  after the backend API is connected.
-                </p>
-              </div>
+              {loading && (
+                <div className="demo-notice">
+                  <span>✧</span>
+                  <div>
+                    <strong>Nova AI</strong>
+                    <p>Soch raha hoon...</p>
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="demo-notice">
+                  <span>!</span>
+                  <div>
+                    <strong>Connection error</strong>
+                    <p>{error}</p>
+                  </div>
+                </div>
+              )}
             </section>
           ) : (
             <section className="welcome-screen">
@@ -300,6 +355,7 @@ export default function App() {
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="Message Nova AI... ask anything"
                   aria-label="Message Nova AI"
+                  disabled={loading}
                 />
                 <kbd>↵</kbd>
               </div>
@@ -320,9 +376,9 @@ export default function App() {
                   className="send-button"
                   type="submit"
                   aria-label="Send message"
-                  disabled={!message.trim()}
+                  disabled={!message.trim() || loading}
                 >
-                  <span>↑</span>
+                  <span>{loading ? "…" : "↑"}</span>
                 </button>
               </div>
             </form>
