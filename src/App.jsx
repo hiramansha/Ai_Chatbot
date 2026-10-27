@@ -37,45 +37,29 @@ export default function App() {
   const [chatError, setChatError] = useState('');
   const bottomRef = useRef(null);
 
-  // Restore the Supabase session after returning from Google OAuth.
+  // Listen for Supabase's initial session and authentication changes.
   useEffect(() => {
     let mounted = true;
 
-    async function restoreSession() {
-      try {
-        const { data, error } = await supabase.auth.getSession();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
 
-        if (!mounted) return;
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
 
-        if (error) {
-          setAuthError(error.message);
-        }
-
-        setUser(data?.session?.user ?? null);
-      } catch (error) {
-        if (mounted) {
-          setAuthError(error.message || 'Could not restore your login.');
-        }
-      } finally {
-        if (mounted) setAuthLoading(false);
-      }
-    }
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (!mounted) return;
-
-        setUser(session?.user ?? null);
-        setAuthLoading(false);
+      if (
+        event === 'SIGNED_IN' ||
+        event === 'INITIAL_SESSION'
+      ) {
         setAuthError('');
       }
-    );
-
-    restoreSession();
+    });
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
@@ -142,7 +126,7 @@ export default function App() {
           email: cleanEmail,
           password,
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo: `${window.location.origin}/`,
           },
         });
 
@@ -153,7 +137,7 @@ export default function App() {
           setNotice('Account created successfully!');
         } else {
           setNotice(
-            'Account created. Check your email to confirm your account, then sign in.'
+            'Account created. Check your email to confirm your account.'
           );
           setAuthMode('login');
         }
@@ -168,31 +152,35 @@ export default function App() {
         setUser(data.user);
       }
     } catch (error) {
-      setAuthError(error.message || 'Authentication failed. Please try again.');
+      setAuthError(
+        error.message || 'Authentication failed. Please try again.'
+      );
     } finally {
       setAuthBusy(false);
     }
   }
 
   async function signInWithProvider(provider) {
+    if (authBusy) return;
+
     setAuthError('');
     setNotice('');
     setAuthBusy(true);
 
     try {
-      const redirectTo = `${window.location.origin}/`;
-
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo,
+          redirectTo: `${window.location.origin}/`,
         },
       });
 
       if (error) throw error;
-      // Supabase redirects the browser to the provider automatically.
+      // Supabase redirects the browser to the OAuth provider.
     } catch (error) {
-      setAuthError(error.message || 'Could not start Google sign-in.');
+      setAuthError(
+        error.message || 'Could not start sign-in. Please try again.'
+      );
       setAuthBusy(false);
     }
   }
@@ -211,6 +199,7 @@ export default function App() {
     setChats([]);
     setActiveChatId(null);
     setMessages([]);
+    setInput('');
   }
 
   function startNewChat() {
@@ -227,12 +216,17 @@ export default function App() {
   }
 
   async function persistChat(nextMessages, chatId) {
-    if (!user) throw new Error('Please sign in again.');
+    if (!user) {
+      throw new Error('Please sign in again.');
+    }
 
     const firstUserMessage = nextMessages.find(
       (message) => message.role === 'user'
     );
-    const title = (firstUserMessage?.content || 'New Chat').slice(0, 60);
+
+    const title = (
+      firstUserMessage?.content || 'New Chat'
+    ).slice(0, 60);
 
     if (chatId) {
       const { data, error } = await supabase
@@ -318,7 +312,9 @@ export default function App() {
 
       if (!response.ok) {
         throw new Error(
-          data.error || data.reply || `Request failed (${response.status})`
+          data.error ||
+            data.reply ||
+            `Request failed (${response.status})`
         );
       }
 
@@ -328,7 +324,11 @@ export default function App() {
         throw new Error('The AI returned an empty response.');
       }
 
-      const assistantMessage = { role: 'assistant', content: reply };
+      const assistantMessage = {
+        role: 'assistant',
+        content: reply,
+      };
+
       const finalMessages = [...nextMessages, assistantMessage];
 
       setMessages(finalMessages);
@@ -366,9 +366,13 @@ export default function App() {
           </div>
 
           <p className="eyebrow">YOUR PERSONAL AI ASSISTANT</p>
+
           <h1>
-            {authMode === 'login' ? 'Welcome back' : 'Create your account'}
+            {authMode === 'login'
+              ? 'Welcome back'
+              : 'Create your account'}
           </h1>
+
           <p className="auth-subtitle">
             {authMode === 'login'
               ? 'Sign in to continue your conversations.'
@@ -382,7 +386,8 @@ export default function App() {
               disabled={authBusy}
               onClick={() => signInWithProvider('google')}
             >
-              <span className="google-symbol">G</span> Continue with Google
+              <span className="google-symbol">G</span>
+              Continue with Google
             </button>
 
             <button
@@ -422,7 +427,9 @@ export default function App() {
               id="password"
               type="password"
               autoComplete={
-                authMode === 'login' ? 'current-password' : 'new-password'
+                authMode === 'login'
+                  ? 'current-password'
+                  : 'new-password'
               }
               placeholder="At least 6 characters"
               minLength={6}
@@ -432,10 +439,15 @@ export default function App() {
             />
 
             {authError && (
-              <p className="form-message error-message">{authError}</p>
+              <p className="form-message error-message">
+                {authError}
+              </p>
             )}
+
             {notice && (
-              <p className="form-message success-message">{notice}</p>
+              <p className="form-message success-message">
+                {notice}
+              </p>
             )}
 
             <button
@@ -459,7 +471,9 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                setAuthMode(
+                  authMode === 'login' ? 'signup' : 'login'
+                );
                 setAuthError('');
                 setNotice('');
               }}
@@ -491,6 +505,7 @@ export default function App() {
         </button>
 
         <div className="history-heading">YOUR HISTORY</div>
+
         <div className="history-list">
           {chats.length === 0 && (
             <p className="history-empty">
@@ -525,6 +540,7 @@ export default function App() {
               <span>{user.email}</span>
             </div>
           </div>
+
           <button className="signout-button" onClick={signOut}>
             Sign out ↗
           </button>
@@ -536,9 +552,11 @@ export default function App() {
           <div className="mobile-brand">
             <div className="nova-mark">✦</div> nova.ai
           </div>
+
           <span className="status-indicator">
             <i /> AI assistant
           </span>
+
           <button className="mobile-new-chat" onClick={startNewChat}>
             ＋ New chat
           </button>
@@ -580,11 +598,14 @@ export default function App() {
                       ? getDisplayName(user).slice(0, 1).toUpperCase()
                       : '✦'}
                   </div>
+
                   <div className="message-content">
                     <div className="message-label">
                       {message.role === 'user' ? 'You' : 'Nova AI'}
                     </div>
-                    <div className="message-text">{message.content}</div>
+                    <div className="message-text">
+                      {message.content}
+                    </div>
                   </div>
                 </article>
               ))}
@@ -631,6 +652,7 @@ export default function App() {
               rows={1}
               aria-label="Message Nova AI"
             />
+
             <button
               type="submit"
               disabled={!input.trim() || sending}
@@ -639,6 +661,7 @@ export default function App() {
               {sending ? '…' : '↑'}
             </button>
           </form>
+
           <p className="composer-note">
             Nova AI can make mistakes. Check important information.
           </p>
