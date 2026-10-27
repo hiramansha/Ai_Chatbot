@@ -37,24 +37,37 @@ export default function App() {
   const [chatError, setChatError] = useState('');
   const bottomRef = useRef(null);
 
-  // Listen for Supabase's initial session and authentication changes.
+  // Keep one source of truth for auth state. Supabase emits INITIAL_SESSION
+  // after it has restored/exchanged the OAuth session from the callback URL.
   useEffect(() => {
     let mounted = true;
+    let receivedAuthEvent = false;
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
+      receivedAuthEvent = true;
 
       setUser(session?.user ?? null);
       setAuthLoading(false);
 
-      if (
-        event === 'SIGNED_IN' ||
-        event === 'INITIAL_SESSION'
-      ) {
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
         setAuthError('');
       }
+    });
+
+    // Backup restoration only if no auth event has arrived yet. This prevents
+    // a late getSession() result from overwriting a newer OAuth event.
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted || receivedAuthEvent) return;
+      if (error) setAuthError(error.message);
+      setUser(data?.session?.user ?? null);
+      setAuthLoading(false);
+    }).catch((error) => {
+      if (!mounted || receivedAuthEvent) return;
+      setAuthError(error?.message || 'Could not restore your session.');
+      setAuthLoading(false);
     });
 
     return () => {
