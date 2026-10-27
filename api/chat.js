@@ -25,7 +25,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // Keep recent conversation only.
     const safeHistory = Array.isArray(history)
       ? history
           .filter(
@@ -38,16 +37,23 @@ export default async function handler(req, res) {
           .slice(-10)
           .map((item) => ({
             role: item.role,
-            parts: [{ text: item.text.slice(0, 4000) }],
+            parts: [
+              {
+                text: item.text.slice(0, 4000),
+              },
+            ],
           }))
       : [];
 
-    // Avoid duplicating the current message.
     const contents = [
       ...safeHistory,
       {
         role: "user",
-        parts: [{ text: message.trim().slice(0, 4000) }],
+        parts: [
+          {
+            text: message.trim().slice(0, 4000),
+          },
+        ],
       },
     ];
 
@@ -100,7 +106,18 @@ ANSWER STYLE:
       }
     );
 
-    const data = await response.json();
+    let data;
+
+    try {
+      data = await response.json();
+    } catch (error) {
+      console.error("Invalid Gemini API response:", error);
+
+      return res.status(502).json({
+        error:
+          "AI service returned an invalid response. Please try again.",
+      });
+    }
 
     if (!response.ok) {
       console.error("Gemini API error:", response.status, data);
@@ -119,6 +136,11 @@ ANSWER STYLE:
       .trim();
 
     if (!reply) {
+      console.error(
+        "Gemini returned no text:",
+        JSON.stringify(data)
+      );
+
       return res.status(502).json({
         error: "AI returned an empty response. Please try again.",
       });
